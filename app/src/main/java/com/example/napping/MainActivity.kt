@@ -1,8 +1,10 @@
 package com.example.napping
 
 import android.annotation.SuppressLint
-import android.health.connect.datatypes.HeartRateRecord
+import android.media.MediaPlayer
 import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -32,6 +35,10 @@ import androidx.compose.ui.unit.sp
 import com.example.napping.ui.theme.NappingTheme
 import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
+
+val LIGHT_DURATION = (10..20).random()
+val DEEP_DURATION = (20..30).random()
+val REM_DURATION = (10..40).random()
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,16 +61,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun TimerWatch() {
     var time by remember { mutableLongStateOf(0L) }
-
     var enabledTimer by remember { mutableStateOf(true) }
-
     var isRunning by remember {  mutableStateOf(false) }
-
     var isStopped by remember { mutableStateOf(false) }
-
     var startTime by remember { mutableLongStateOf(0L) }
 
     var heartRate by remember { mutableIntStateOf(80) }
+    var sleepStage by remember { mutableStateOf("") }
+
+    val mContext = LocalContext.current
+    val mMediaPlayer = MediaPlayer.create(mContext, Settings.System.DEFAULT_RINGTONE_URI)
 
     Column (
         modifier = Modifier
@@ -90,7 +97,7 @@ fun TimerWatch() {
             )
         }
         Spacer(modifier = Modifier.height(18.dp))
-        SleepStage(heartRate = heartRate)
+        SleepStage(sleepStage)
         Spacer(modifier = Modifier.height(18.dp))
         Button (
             onClick = {
@@ -119,6 +126,7 @@ fun TimerWatch() {
         Row {
             Button(
                 onClick = {
+                    if(mMediaPlayer.isPlaying) mMediaPlayer.stop()
                     if(isRunning) {
                         isRunning = false
                         enabledTimer = true
@@ -140,6 +148,10 @@ fun TimerWatch() {
         while(isRunning) {
             delay(1000)
             time = System.currentTimeMillis() - startTime
+
+            heartRate = emulateHeartRate(timePassedMs = time, restingHeartRate = 80)
+            sleepStage = getStageName(heartRate = heartRate, timePassedMs = time)
+            if(sleepStage == "Waking Up" && !mMediaPlayer.isPlaying) mMediaPlayer.start()
         }
     }
 }
@@ -154,22 +166,23 @@ fun formatTime(mils: Long): String {
 }
 
 @Composable
-fun SleepStage(heartRate: Int) {
-    val stage by remember { mutableStateOf(getStageName(heartRate)) }
-
+fun SleepStage(sleepStage: String) {
     Text(
-        text = stage,
+        text = sleepStage,
         style = TextStyle(
-            color = getColor(stage),
+            color = getColor(sleepStage),
             fontSize = 30.sp
         )
     )
 }
 
-fun getStageName(heartRate: Int): String {
-    var stage: String = "Light Sleep"
-    if(heartRate < 70) stage = "Deep Sleep"
-    if(heartRate in 71..79) stage = "REM"
+fun getStageName(heartRate: Int, timePassedMs: Long): String {
+    val minutesPassed = TimeUnit.MILLISECONDS.toMinutes(timePassedMs)
+
+    var stage: String = "Waking Up"
+    if(heartRate >= 68 && minutesPassed < 20) stage = "Light Sleep"
+    if(heartRate < 68) stage = "Deep Sleep"
+    if(heartRate in 68..76 && minutesPassed > 15) stage = "REM"
     return stage
 }
 
@@ -178,7 +191,32 @@ fun getColor(stage: String): Color {
         "Light Sleep" -> Color.Yellow
         "Deep Sleep" -> Color.White
         "REM" -> Color.Green
-        else -> Color.Black
+        else -> Color.Red
     }
 }
 
+fun emulateHeartRate(timePassedMs: Long, restingHeartRate: Int): Int {
+    val minutesPassed = TimeUnit.MILLISECONDS.toMinutes(timePassedMs)
+
+    var heartRate = restingHeartRate
+    val lowest = 60
+    val diff = (restingHeartRate - lowest).toDouble()
+    Log.v("diff", diff.toString())
+
+    if (minutesPassed < LIGHT_DURATION) {
+        val step = (diff / LIGHT_DURATION) * -1
+        Log.v("step", step.toString())
+        heartRate += (minutesPassed * step).toInt()
+
+    } else if (minutesPassed < LIGHT_DURATION + DEEP_DURATION) {
+       heartRate = lowest + (-1..1).random()
+    } else if (minutesPassed < LIGHT_DURATION + DEEP_DURATION + REM_DURATION) {
+        val step = (diff / REM_DURATION)
+        Log.v("step REM", step.toString())
+        var inREM = minutesPassed - (LIGHT_DURATION + DEEP_DURATION)
+        Log.v("inREM", inREM.toString())
+        heartRate = lowest + (inREM * step).toInt()
+    }
+
+    return heartRate
+}
